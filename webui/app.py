@@ -6,13 +6,11 @@ import requests
 import streamlit as st
 
 GUARDRAILS_SERVICE_URL = "http://127.0.0.1:8002/check/input"
-RAG_SERVICE_URL = "http://127.0.0.1:8001/query"
-IMAGE_ANALYZER_SERVICE_URL = "http://127.0.0.1:8003/analyze"
-AGENT_SERVICE_URL = "http://127.0.0.1:8004/agent/run"
+AGENT_WITH_IMAGES_URL = "http://127.0.0.1:8004/agent/run-with-images"
 OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_CHAT_MODEL = "llama3"
 SERVICE_TIMEOUT_SECONDS = 30
-AGENT_TIMEOUT_SECONDS = 120
+AGENT_TIMEOUT_SECONDS = 180
 CHAT_TIMEOUT_SECONDS = 120
 CHAT_UNAVAILABLE_MESSAGE = "Local AI assistant is unavailable."
 CHAT_OFF_TOPIC_REPLY = (
@@ -50,25 +48,6 @@ def _post_json(
     return None
 
 
-def _post_files(
-    url: str, files: list[tuple], unavailable_message: str
-) -> dict[str, Any] | None:
-    """POST multipart files to a backend service. Returns parsed JSON or None on failure."""
-    try:
-        response = requests.post(url, files=files, timeout=SERVICE_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.ConnectionError:
-        st.error(unavailable_message)
-    except requests.exceptions.Timeout:
-        st.error("Service request timed out. Please try again.")
-    except requests.exceptions.HTTPError as exc:
-        st.error(f"Service returned an HTTP error: {exc.response.status_code}")
-    except ValueError:
-        st.error("Service returned an invalid JSON response.")
-    return None
-
-
 def call_guardrails_service(text: str) -> dict[str, Any] | None:
     return _post_json(
         GUARDRAILS_SERVICE_URL,
@@ -77,45 +56,38 @@ def call_guardrails_service(text: str) -> dict[str, Any] | None:
     )
 
 
-def call_rag_service(description: str) -> dict[str, Any] | None:
-    return _post_json(
-        RAG_SERVICE_URL,
-        {"description": description},
-        "RAG service is not available on port 8001.",
-    )
-
-
-def call_image_analyzer_service(uploaded_files) -> dict[str, Any] | None:
+def call_agent_with_images_service(
+    description: str,
+    agent_name: str,
+    uploaded_files,
+) -> dict[str, Any] | None:
+    """POST multipart (description + agent_name + images) to the autonomous agent."""
     files = [
         ("files", (f.name, f.getvalue(), f.type or "application/octet-stream"))
-        for f in uploaded_files
+        for f in (uploaded_files or [])
     ]
-    return _post_files(
-        IMAGE_ANALYZER_SERVICE_URL,
-        files,
-        "Image Analyzer service is not available on port 8003.",
-    )
-
-
-def call_agent_service(
-    description: str,
-    rag_result: dict[str, Any] | None,
-    image_analysis: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    return _post_json(
-        AGENT_SERVICE_URL,
-        {
-            "description": description,
-            "rag_result": rag_result or {},
-            "image_analysis": image_analysis or {},
-        },
-        "Agent service is not available on port 8004.",
-        timeout=AGENT_TIMEOUT_SECONDS,
-        timeout_message=(
+    data = {"description": description, "agent_name": agent_name}
+    try:
+        response = requests.post(
+            AGENT_WITH_IMAGES_URL,
+            data=data,
+            files=files or None,
+            timeout=AGENT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        st.error("Agent service is not available on port 8004.")
+    except requests.exceptions.Timeout:
+        st.error(
             "Agent service timed out. Ollama may still be generating. "
             "Please try again."
-        ),
-    )
+        )
+    except requests.exceptions.HTTPError as exc:
+        st.error(f"Agent service returned an HTTP error: {exc.response.status_code}")
+    except ValueError:
+        st.error("Agent service returned an invalid JSON response.")
+    return None
 
 
 def _summarise_rag_for_chat(rag_response: dict[str, Any] | None) -> str:
@@ -363,12 +335,9 @@ def render_agent_analysis(agent_response: dict[str, Any]) -> None:
         st.json(agent_response)
 
 
-def run_triage_pipeline(description: str, uploaded_files) -> None:
-    """Guardrails → RAG → Image Analyzer → Agent, with step-by-step status feedback."""
-    rag_response: dict[str, Any] | None = None
-    image_response: dict[str, Any] | None = None
+def run_triage_pipeline(description: str, agent_name: str, uploaded_files) -> None:
+    """Guardrails → autonomous Agent (which decides which tools to call internally)."""
     agent_response: dict[str, Any] | None = None
-    images_skipped = False
 
     with st.status("Processing listing...", expanded=True) as status:
         st.write("Checking listing safety...")
@@ -385,32 +354,19 @@ def run_triage_pipeline(description: str, uploaded_files) -> None:
 
         st.write("Listing approved")
 
-        st.write("Querying RAG service...")
-        rag_response = call_rag_service(description)
-        if rag_response is None:
-            status.update(label="RAG service unavailable", state="error")
-            return
-        st.write("RAG analysis complete")
-
-        if not uploaded_files:
-            st.write("No images uploaded — skipping image analysis")
-            images_skipped = True
-        else:
-            st.write(f"Analysing {len(uploaded_files)} image(s)...")
-            image_response = call_image_analyzer_service(uploaded_files)
-            if image_response is None:
-                status.update(label="Image Analyzer service unavailable", state="error")
-                return
-            st.write("Image analysis complete")
-
-        st.write("Running agent analysis...")
-        agent_response = call_agent_service(description, rag_response, image_response)
+        st.write("Running autonomous AI agent...")
+        agent_response = call_agent_with_images_service(
+            description, agent_name, uploaded_files
+        )
         if agent_response is None:
             status.update(label="Agent service unavailable", state="error")
             return
-        st.write("Agent analysis complete")
+        st.write("Agent completed analysis")
 
         status.update(label="Analysis complete", state="complete")
+
+    rag_response = agent_response.get("rag_result")
+    image_response = agent_response.get("image_analysis")
 
     st.session_state.last_triage = {
         "description": description,
@@ -419,14 +375,19 @@ def run_triage_pipeline(description: str, uploaded_files) -> None:
         "agent_response": agent_response,
     }
 
-    st.markdown("### RAG service response")
-    st.json(rag_response)
-
-    st.markdown("### Image Analyzer response")
-    if images_skipped:
-        st.info("No images uploaded, skipping image analysis.")
+    st.markdown("### RAG service response (via agent)")
+    if rag_response:
+        st.json(rag_response)
     else:
+        st.info("RAG did not contribute to this analysis.")
+
+    st.markdown("### Image Analyzer response (via agent)")
+    if image_response:
         st.json(image_response)
+    elif not uploaded_files:
+        st.info("No images uploaded, image analysis skipped.")
+    else:
+        st.info("Image analysis did not contribute to this analysis.")
 
     render_agent_analysis(agent_response)
 
@@ -434,8 +395,9 @@ def run_triage_pipeline(description: str, uploaded_files) -> None:
 def render_submission_tab() -> None:
     st.subheader("Listing Submission")
     st.write(
-        "Submit a property listing to run it through the triage pipeline: "
-        "guardrails → RAG comparable-listing analysis → image analysis → agent reasoning."
+        "Submit a property listing. Guardrails check it for safety, then an "
+        "autonomous LangGraph agent decides which tools to call (RAG, image "
+        "analyser) and produces a triaged recommendation."
     )
 
     with st.container(border=True):
@@ -488,7 +450,9 @@ def render_submission_tab() -> None:
 
     st.divider()
     render_submitted_summary(submitted_payload, image_names)
-    run_triage_pipeline(description.strip(), uploaded_files or [])
+    run_triage_pipeline(
+        description.strip(), agent_name.strip(), uploaded_files or []
+    )
 
 
 st.set_page_config(page_title="AI Property Triage System", layout="wide")

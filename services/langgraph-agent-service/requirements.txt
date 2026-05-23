@@ -2,3 +2,5 @@ fastapi
 uvicorn
 langgraph
 langchain-ollama
+requests
+python-multipart
