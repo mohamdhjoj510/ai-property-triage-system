@@ -10,6 +10,7 @@ RAG_SERVICE_URL = "http://127.0.0.1:8001/query"
 IMAGE_ANALYZER_SERVICE_URL = "http://127.0.0.1:8003/analyze"
 AGENT_SERVICE_URL = "http://127.0.0.1:8004/agent/run"
 SERVICE_TIMEOUT_SECONDS = 30
+AGENT_TIMEOUT_SECONDS = 120
 
 ROUTE_BADGE_RENDERER = {
     "residential": lambda label: st.success(f"Suggested route: {label}"),
@@ -25,17 +26,21 @@ ASSISTANT_PLACEHOLDER_REPLY = (
 
 
 def _post_json(
-    url: str, payload: dict[str, Any], unavailable_message: str
+    url: str,
+    payload: dict[str, Any],
+    unavailable_message: str,
+    timeout: int = SERVICE_TIMEOUT_SECONDS,
+    timeout_message: str = "Service request timed out. Please try again.",
 ) -> dict[str, Any] | None:
     """POST JSON to a backend service. Returns parsed JSON or None on failure."""
     try:
-        response = requests.post(url, json=payload, timeout=SERVICE_TIMEOUT_SECONDS)
+        response = requests.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.ConnectionError:
         st.error(unavailable_message)
     except requests.exceptions.Timeout:
-        st.error("Service request timed out. Please try again.")
+        st.error(timeout_message)
     except requests.exceptions.HTTPError as exc:
         st.error(f"Service returned an HTTP error: {exc.response.status_code}")
     except ValueError:
@@ -103,6 +108,11 @@ def call_agent_service(
             "image_analysis": image_analysis or {},
         },
         "Agent service is not available on port 8004.",
+        timeout=AGENT_TIMEOUT_SECONDS,
+        timeout_message=(
+            "Agent service timed out. Ollama may still be generating. "
+            "Please try again."
+        ),
     )
 
 
