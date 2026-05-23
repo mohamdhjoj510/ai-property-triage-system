@@ -1,14 +1,19 @@
-"""LangGraph agent service — minimal FastAPI skeleton with mock reasoning.
+"""LangGraph agent service — real StateGraph orchestration over rule-based nodes.
 
-Today this service runs simple keyword-based rules to produce an agent-style
-analysis. The real LangGraph orchestration (tool calls, multi-step reasoning,
-state) will replace the body of `run_agent` later — input and output shapes
-are intended to stay stable so downstream consumers don't have to change.
+The graph runs:  planner → synthesizer
+
+`planner_node` decides the routing label and which tools contributed to the
+analysis. `synthesizer_node` produces the human-readable fields (summary,
+recommendations, renovation insights). LLM-backed nodes and external tool
+calls will replace these implementations later — the graph topology and the
+endpoint contract are intended to stay stable.
 """
 
 import re
+from typing import TypedDict
 
 from fastapi import FastAPI
+from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="langgraph-agent-service")
@@ -40,6 +45,25 @@ class AgentRunRequest(BaseModel):
     description: str
     rag_result: dict = Field(default_factory=dict)
     image_analysis: dict = Field(default_factory=dict)
+
+
+class AgentState(TypedDict, total=False):
+    # Inputs
+    description: str
+    rag_result: dict
+    image_analysis: dict
+
+    # Planner outputs
+    suggested_route: str
+    tools_used: list[str]
+
+    # Synthesizer outputs
+    property_summary: str
+    recommendations: list[str]
+    renovation_insights: list[str]
+
+
+# --- Pure rule helpers (kept stable so they can later be reused or swapped) ---
 
 
 def determine_route(description: str) -> str:
@@ -115,6 +139,51 @@ def build_recommendations(route: str) -> list[str]:
     ]
 
 
+# --- LangGraph nodes ---
+
+
+def planner_node(state: AgentState) -> dict:
+    """Pick a routing label and record which upstream tools contributed input."""
+    route = determine_route(state.get("description", ""))
+    tools_used: list[str] = []
+    if state.get("rag_result"):
+        tools_used.append("rag_service")
+    if state.get("image_analysis"):
+        tools_used.append("image_analyser_service")
+    return {"suggested_route": route, "tools_used": tools_used}
+
+
+def synthesizer_node(state: AgentState) -> dict:
+    """Produce the human-readable response fields from the planner's decisions."""
+    description = state.get("description", "")
+    route = state.get("suggested_route", "review_required")
+    return {
+        "property_summary": build_property_summary(description, route),
+        "recommendations": build_recommendations(route),
+        "renovation_insights": build_renovation_insights(
+            description,
+            state.get("rag_result", {}),
+            state.get("image_analysis", {}),
+        ),
+    }
+
+
+def _build_graph():
+    graph = StateGraph(AgentState)
+    graph.add_node("planner", planner_node)
+    graph.add_node("synthesizer", synthesizer_node)
+    graph.set_entry_point("planner")
+    graph.add_edge("planner", "synthesizer")
+    graph.add_edge("synthesizer", END)
+    return graph.compile()
+
+
+_compiled_graph = _build_graph()
+
+
+# --- HTTP surface (contract unchanged) ---
+
+
 @app.get("/")
 def root():
     return {"service": "langgraph-agent-service", "status": "running"}
@@ -122,13 +191,16 @@ def root():
 
 @app.post("/agent/run")
 def run_agent(request: AgentRunRequest):
-    route = determine_route(request.description)
+    initial_state: AgentState = {
+        "description": request.description,
+        "rag_result": request.rag_result,
+        "image_analysis": request.image_analysis,
+    }
+    final_state = _compiled_graph.invoke(initial_state)
     return {
-        "property_summary": build_property_summary(request.description, route),
-        "recommendations": build_recommendations(route),
-        "renovation_insights": build_renovation_insights(
-            request.description, request.rag_result, request.image_analysis
-        ),
-        "suggested_route": route,
-        "tools_used": ["rag_service", "image_analyser_service"],
+        "property_summary": final_state["property_summary"],
+        "recommendations": final_state["recommendations"],
+        "renovation_insights": final_state["renovation_insights"],
+        "suggested_route": final_state["suggested_route"],
+        "tools_used": final_state["tools_used"],
     }
