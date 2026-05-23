@@ -1,6 +1,6 @@
 """LangGraph agent service — autonomous multi-tool orchestrator + Ollama llama3.
 
-The graph runs:  planner → tool → synthesizer
+The graph runs:  planner → tool → synthesizer → validation
 
 * `planner_node` decides the routing label (rule-based) and flags which
   tools the agent still needs to call (RAG if no `rag_result` was provided,
@@ -14,6 +14,9 @@ The graph runs:  planner → tool → synthesizer
   back to rule-based helpers when the model is unreachable or returns
   invalid JSON. It also computes `tools_used` from the post-tool state so
   the field truthfully reflects what contributed.
+* `validation_node` runs deterministic output guardrails on the LLM
+  response: flags unsupported feature claims, risky/overconfident language,
+  computes a confidence level, and sanitizes recommendations.
 
 Two HTTP entrypoints:
   * `POST /agent/run`              — original JSON contract (back-compat).
@@ -66,6 +69,51 @@ RAG_TOOL_TIMEOUT_SECONDS = 30
 IMAGE_ANALYSER_URL = "http://127.0.0.1:8003/analyze"
 IMAGE_ANALYSER_TIMEOUT_SECONDS = 60
 
+# --- Output guardrails configuration ---
+
+# Curated feature vocabulary the validator can reason about. Each entry must
+# appear in at least one of (description, RAG results, image analysis) for an
+# LLM mention of it to be considered grounded.
+FEATURE_KEYWORDS = (
+    "swimming pool",
+    "elevator",
+    "sea view",
+    "ocean view",
+    "parking",
+    "garage",
+    "gym",
+    "cinema room",
+    "smart home",
+    "balcony",
+    "private garden",
+    "garden",
+    "rooftop terrace",
+    "rooftop",
+    "concierge",
+    "doorman",
+    "jacuzzi",
+    "sauna",
+    "fireplace",
+    "mamad",
+)
+
+RISKY_PHRASES = (
+    "guaranteed investment",
+    "guaranteed profit",
+    "guaranteed return",
+    "no risk",
+    "risk-free",
+    "perfect investment",
+    "always increases in value",
+    "cannot lose",
+)
+
+HUMAN_REVIEW_DISCLAIMER = (
+    "AI-generated recommendations should be verified by a human agent."
+)
+HIGH_IMAGE_CONFIDENCE_THRESHOLD = 0.8
+MEDIUM_IMAGE_CONFIDENCE_THRESHOLD = 0.5
+
 
 class AgentRunRequest(BaseModel):
     description: str
@@ -90,6 +138,9 @@ class AgentState(TypedDict, total=False):
     recommendations: list[str]
     renovation_insights: list[str]
     tools_used: list[str]
+
+    # Validation outputs
+    validation: dict
 
 
 # --- Pure rule helpers (used by planner and as synthesizer fallback) ---
@@ -421,15 +472,155 @@ def synthesizer_node(state: AgentState) -> dict:
     }
 
 
+# --- Output guardrails (deterministic, no second LLM call) ---
+
+
+def _collect_text(*values) -> str:
+    """Concatenate any string-valued fields from arbitrary nested inputs."""
+    chunks: list[str] = []
+
+    def walk(value):
+        if isinstance(value, str):
+            chunks.append(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                walk(v)
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                walk(item)
+
+    for value in values:
+        walk(value)
+    return " ".join(chunks).lower()
+
+
+def extract_known_features(
+    description: str,
+    rag_result: dict,
+    image_analysis: dict,
+) -> set[str]:
+    """Return the curated features that are actually grounded in the inputs."""
+    combined = _collect_text(description, rag_result, image_analysis)
+    return {feature for feature in FEATURE_KEYWORDS if feature in combined}
+
+
+def find_unsupported_claims(
+    llm_texts: list[str], known_features: set[str]
+) -> list[str]:
+    """Return features the LLM mentioned that aren't in `known_features`."""
+    combined = " ".join(text.lower() for text in llm_texts if text)
+    unsupported: list[str] = []
+    for feature in FEATURE_KEYWORDS:
+        if feature in combined and feature not in known_features:
+            unsupported.append(feature)
+    return unsupported
+
+
+def contains_risky_claims(llm_texts: list[str]) -> bool:
+    combined = " ".join(text.lower() for text in llm_texts if text)
+    return any(phrase in combined for phrase in RISKY_PHRASES)
+
+
+def _average_image_confidence(image_analysis: dict) -> float | None:
+    confidences: list[float] = []
+    for item in image_analysis.get("results", []) or []:
+        confidence = item.get("confidence")
+        if isinstance(confidence, (int, float)):
+            confidences.append(float(confidence))
+    if not confidences:
+        return None
+    return sum(confidences) / len(confidences)
+
+
+def compute_confidence_level(
+    rag_result: dict,
+    image_analysis: dict,
+    unsupported_claims: list[str],
+    risky_detected: bool,
+) -> str:
+    if risky_detected or unsupported_claims:
+        return "low"
+
+    has_rag = bool(rag_result)
+    has_images = bool(image_analysis)
+
+    if not has_rag and not has_images:
+        return "low"
+
+    if has_rag and has_images:
+        avg = _average_image_confidence(image_analysis)
+        if avg is None:
+            return "medium"
+        if avg >= HIGH_IMAGE_CONFIDENCE_THRESHOLD:
+            return "high"
+        if avg >= MEDIUM_IMAGE_CONFIDENCE_THRESHOLD:
+            return "medium"
+        return "low"
+
+    # Exactly one of (rag, image) is present
+    return "medium"
+
+
+def sanitize_recommendations(
+    recommendations: list[str], risky_detected: bool
+) -> list[str]:
+    """Strip recommendation lines containing risky phrases and append a disclaimer."""
+    if not risky_detected:
+        return list(recommendations)
+
+    cleaned: list[str] = []
+    for rec in recommendations:
+        lowered = rec.lower()
+        if any(phrase in lowered for phrase in RISKY_PHRASES):
+            continue
+        cleaned.append(rec)
+    cleaned.append(HUMAN_REVIEW_DISCLAIMER)
+    return cleaned
+
+
+def validation_node(state: AgentState) -> dict:
+    """Run output guardrails over the synthesizer's output."""
+    description = state.get("description", "")
+    rag_result = state.get("rag_result", {}) or {}
+    image_analysis = state.get("image_analysis", {}) or {}
+
+    summary = state.get("property_summary", "") or ""
+    recommendations = list(state.get("recommendations") or [])
+    insights = list(state.get("renovation_insights") or [])
+
+    llm_texts = [summary, *recommendations, *insights]
+
+    known_features = extract_known_features(description, rag_result, image_analysis)
+    unsupported = find_unsupported_claims(llm_texts, known_features)
+    risky_detected = contains_risky_claims(llm_texts)
+    confidence = compute_confidence_level(
+        rag_result, image_analysis, unsupported, risky_detected
+    )
+    sanitized_recs = sanitize_recommendations(recommendations, risky_detected)
+
+    validation = {
+        "unsupported_claims": unsupported,
+        "risky_claims_detected": risky_detected,
+        "confidence_level": confidence,
+        "validation_passed": not (unsupported or risky_detected),
+    }
+    return {
+        "recommendations": sanitized_recs,
+        "validation": validation,
+    }
+
+
 def _build_graph():
     graph = StateGraph(AgentState)
     graph.add_node("planner", planner_node)
     graph.add_node("tool", tool_node)
     graph.add_node("synthesizer", synthesizer_node)
+    graph.add_node("validation", validation_node)
     graph.set_entry_point("planner")
     graph.add_edge("planner", "tool")
     graph.add_edge("tool", "synthesizer")
-    graph.add_edge("synthesizer", END)
+    graph.add_edge("synthesizer", "validation")
+    graph.add_edge("validation", END)
     return graph.compile()
 
 
@@ -442,10 +633,11 @@ _compiled_graph = _build_graph()
 def _build_response(final_state: AgentState) -> dict:
     """Shape the final state into the agent's public response.
 
-    The five original fields are always present. `rag_result` and
-    `image_analysis` are added only when those tools contributed — the
-    WebUI can use them to render the same RAG / image sections it used
-    to render itself before this service took over orchestration.
+    The five original fields are always present, plus the `validation`
+    block produced by `validation_node`. `rag_result` and `image_analysis`
+    are added only when those tools contributed — the WebUI can use them
+    to render the same RAG / image sections it used to render itself
+    before this service took over orchestration.
     """
     response: dict = {
         "property_summary": final_state["property_summary"],
@@ -453,6 +645,7 @@ def _build_response(final_state: AgentState) -> dict:
         "renovation_insights": final_state["renovation_insights"],
         "suggested_route": final_state["suggested_route"],
         "tools_used": final_state["tools_used"],
+        "validation": final_state.get("validation") or {},
     }
     rag_result = final_state.get("rag_result") or {}
     image_analysis = final_state.get("image_analysis") or {}
