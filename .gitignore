@@ -81,3 +81,6 @@ data/**/processed/
 
 # n8n local runtime
 n8n/.n8n/
+
+# Local vector store (ChromaDB persists here — regenerate via populate_chroma.py)
+services/rag-service/chroma_db/
