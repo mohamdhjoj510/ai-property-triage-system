@@ -9,8 +9,15 @@ GUARDRAILS_SERVICE_URL = "http://127.0.0.1:8002/check/input"
 RAG_SERVICE_URL = "http://127.0.0.1:8001/query"
 IMAGE_ANALYZER_SERVICE_URL = "http://127.0.0.1:8003/analyze"
 AGENT_SERVICE_URL = "http://127.0.0.1:8004/agent/run"
+OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_CHAT_MODEL = "llama3"
 SERVICE_TIMEOUT_SECONDS = 30
 AGENT_TIMEOUT_SECONDS = 120
+CHAT_TIMEOUT_SECONDS = 120
+CHAT_UNAVAILABLE_MESSAGE = "Local AI assistant is unavailable."
+CHAT_OFF_TOPIC_REPLY = (
+    "I can only assist with questions related to the analysed property."
+)
 
 ROUTE_BADGE_RENDERER = {
     "residential": lambda label: st.success(f"Suggested route: {label}"),
@@ -19,11 +26,6 @@ ROUTE_BADGE_RENDERER = {
 }
 ALLOWED_IMAGE_TYPES = ["png", "jpg", "jpeg"]
 PREVIEW_COLUMNS = 3
-
-ASSISTANT_PLACEHOLDER_REPLY = (
-    "This is a placeholder response from the local real estate assistant."
-)
-
 
 def _post_json(
     url: str,
@@ -116,6 +118,140 @@ def call_agent_service(
     )
 
 
+def _summarise_rag_for_chat(rag_response: dict[str, Any] | None) -> str:
+    if not rag_response:
+        return "No RAG results available."
+    listings = rag_response.get("similar_listings") or []
+    if not listings:
+        return "No similar listings retrieved."
+    lines = []
+    for listing in listings:
+        lines.append(
+            f"- {listing.get('property_type', '?')} in "
+            f"{listing.get('location', '?')}, "
+            f"price {listing.get('price', '?')}, "
+            f"condition {listing.get('condition', '?')}"
+        )
+    insight = rag_response.get("insight")
+    if insight:
+        lines.append(f"RAG insight: {insight}")
+    return "\n".join(lines)
+
+
+def _summarise_images_for_chat(image_response: dict[str, Any] | None) -> str:
+    if not image_response:
+        return "No image analysis available."
+    results = image_response.get("results") or []
+    if not results:
+        return "No image analysis results."
+    lines = []
+    for item in results:
+        lines.append(
+            f"- {item.get('filename', '?')}: "
+            f"{item.get('detected_room_type', '?')}, "
+            f"condition score {item.get('condition_score', '?')}/5"
+        )
+    return "\n".join(lines)
+
+
+def _summarise_agent_for_chat(agent_response: dict[str, Any] | None) -> str:
+    if not agent_response:
+        return "No agent analysis available."
+    lines = [
+        f"Suggested route: {agent_response.get('suggested_route', '?')}",
+        f"Summary: {agent_response.get('property_summary', '?')}",
+    ]
+    recommendations = agent_response.get("recommendations") or []
+    if recommendations:
+        lines.append("Recommendations:")
+        for item in recommendations:
+            lines.append(f"- {item}")
+    renovation_insights = agent_response.get("renovation_insights") or []
+    if renovation_insights:
+        lines.append("Renovation insights:")
+        for item in renovation_insights:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _build_chat_prompt(
+    user_message: str,
+    history: list[dict[str, str]],
+    triage_context: dict[str, Any] | None,
+) -> str:
+    parts = [
+        "You are a helpful real-estate triage assistant. "
+        "Answer questions ONLY about the analysed property described below, "
+        "or general real-estate questions directly relevant to it. "
+        "If the user asks about anything unrelated to this property or real estate, "
+        f'respond with EXACTLY: "{CHAT_OFF_TOPIC_REPLY}"',
+        "",
+        "ANALYSED PROPERTY CONTEXT:",
+    ]
+
+    if triage_context:
+        parts.append(
+            f"Description: {triage_context.get('description', 'N/A')}"
+        )
+        parts.append("")
+        parts.append("Similar listings from RAG:")
+        parts.append(_summarise_rag_for_chat(triage_context.get("rag_response")))
+        parts.append("")
+        parts.append("Image analysis:")
+        parts.append(_summarise_images_for_chat(triage_context.get("image_response")))
+        parts.append("")
+        parts.append("Agent analysis:")
+        parts.append(_summarise_agent_for_chat(triage_context.get("agent_response")))
+    else:
+        parts.append(
+            "No property has been analysed yet in this session. "
+            "Ask the user to submit a listing in the Listing Submission tab first."
+        )
+
+    if history:
+        parts.append("")
+        parts.append("CONVERSATION HISTORY:")
+        for message in history:
+            role_label = "User" if message["role"] == "user" else "Assistant"
+            parts.append(f"{role_label}: {message['content']}")
+
+    parts.append("")
+    parts.append(f"User: {user_message}")
+    parts.append("Assistant:")
+    return "\n".join(parts)
+
+
+def call_chat_assistant(
+    user_message: str,
+    history: list[dict[str, str]],
+    triage_context: dict[str, Any] | None,
+) -> str | None:
+    """Call Ollama llama3 for a single chat turn. Returns reply text, or None if unavailable."""
+    prompt = _build_chat_prompt(user_message, history, triage_context)
+    try:
+        response = requests.post(
+            OLLAMA_GENERATE_URL,
+            json={
+                "model": OLLAMA_CHAT_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=CHAT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        ValueError,
+    ):
+        return None
+
+    reply = (data.get("response") or "").strip()
+    return reply or CHAT_OFF_TOPIC_REPLY
+
+
 def render_image_previews(uploaded_files) -> None:
     if not uploaded_files:
         return
@@ -129,11 +265,19 @@ def render_image_previews(uploaded_files) -> None:
 
 
 def render_assistant_tab() -> None:
-    st.subheader("Conversational Assistant")
-    st.info(
-        "Local LLM (Ollama) integration will be added later. "
-        "For now this tab returns a placeholder response."
-    )
+    st.subheader("Property AI Assistant")
+
+    triage_context = st.session_state.get("last_triage")
+    if triage_context:
+        st.caption(
+            "Ask questions about the most recently analysed property. "
+            "The assistant runs locally on Ollama (llama3)."
+        )
+    else:
+        st.info(
+            "No property has been analysed yet — submit a listing in the "
+            "**Listing Submission** tab first, then come back here to ask about it."
+        )
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -142,17 +286,23 @@ def render_assistant_tab() -> None:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    user_input = st.chat_input("Ask the real estate assistant...")
-    if user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+    user_input = st.chat_input("Ask about the analysed property...")
+    if not user_input:
+        return
 
-        st.session_state.messages.append(
-            {"role": "assistant", "content": ASSISTANT_PLACEHOLDER_REPLY}
-        )
-        with st.chat_message("assistant"):
-            st.markdown(ASSISTANT_PLACEHOLDER_REPLY)
+    history_snapshot = list(st.session_state.messages)
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            reply = call_chat_assistant(user_input, history_snapshot, triage_context)
+        if reply is None:
+            reply = CHAT_UNAVAILABLE_MESSAGE
+        st.markdown(reply)
+
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
 def render_submitted_summary(payload: dict[str, Any], image_names: list[str]) -> None:
@@ -261,6 +411,13 @@ def run_triage_pipeline(description: str, uploaded_files) -> None:
         st.write("Agent analysis complete")
 
         status.update(label="Analysis complete", state="complete")
+
+    st.session_state.last_triage = {
+        "description": description,
+        "rag_response": rag_response,
+        "image_response": image_response,
+        "agent_response": agent_response,
+    }
 
     st.markdown("### RAG service response")
     st.json(rag_response)
