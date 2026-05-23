@@ -22,6 +22,12 @@ ROUTE_BADGE_RENDERER = {
     "commercial": lambda label: st.info(f"Suggested route: {label}"),
     "review_required": lambda label: st.warning(f"Suggested route: {label}"),
 }
+
+CONFIDENCE_BADGE_RENDERER = {
+    "high": lambda label: st.success(f"Confidence: {label}"),
+    "medium": lambda label: st.info(f"Confidence: {label}"),
+    "low": lambda label: st.warning(f"Confidence: {label}"),
+}
 ALLOWED_IMAGE_TYPES = ["png", "jpg", "jpeg"]
 PREVIEW_COLUMNS = 3
 
@@ -291,6 +297,52 @@ def render_submitted_summary(payload: dict[str, Any], image_names: list[str]) ->
             st.caption("No images attached.")
 
 
+def render_output_validation(validation: dict[str, Any]) -> None:
+    """Pretty-print the validator's findings as a dedicated section."""
+    st.markdown("### Output Validation")
+
+    if not validation:
+        st.info("No validation data was returned by the agent.")
+        return
+
+    validation_passed = validation.get("validation_passed", False)
+    confidence_level = validation.get("confidence_level", "unknown")
+    risky_detected = bool(validation.get("risky_claims_detected"))
+    unsupported_claims = validation.get("unsupported_claims") or []
+
+    status_col, confidence_col, risky_col = st.columns(3)
+
+    with status_col:
+        st.markdown("**Status**")
+        if validation_passed:
+            st.success("✅ Passed")
+        else:
+            st.warning("⚠️ Needs review")
+
+    with confidence_col:
+        st.markdown("**Confidence**")
+        label = confidence_level.title() if isinstance(confidence_level, str) else "Unknown"
+        renderer = CONFIDENCE_BADGE_RENDERER.get(confidence_level)
+        if renderer is not None:
+            renderer(label)
+        else:
+            st.info(f"Confidence: {label}")
+
+    with risky_col:
+        st.markdown("**Risky claims**")
+        if risky_detected:
+            st.warning("Risky claims detected")
+        else:
+            st.success("No risky claims detected")
+
+    st.markdown("**Unsupported claims**")
+    if unsupported_claims:
+        for claim in unsupported_claims:
+            st.write(f"- {claim}")
+    else:
+        st.caption("No unsupported claims detected.")
+
+
 def render_agent_analysis(agent_response: dict[str, Any]) -> None:
     """Pretty-print the structured agent response."""
     st.markdown("### Agent Analysis")
@@ -330,6 +382,8 @@ def render_agent_analysis(agent_response: dict[str, Any]) -> None:
         st.write(", ".join(tools_used))
     else:
         st.caption("No tools reported.")
+
+    render_output_validation(agent_response.get("validation") or {})
 
     with st.expander("Raw agent response"):
         st.json(agent_response)
