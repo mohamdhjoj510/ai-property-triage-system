@@ -1,1 +1,2 @@
-# LangGraph agent service dependencies — populate during implementation.
+fastapi
+uvicorn

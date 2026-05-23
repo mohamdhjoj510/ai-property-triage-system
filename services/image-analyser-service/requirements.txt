@@ -1,1 +1,3 @@
-# Image analyser service dependencies — populate during implementation.
+fastapi
+uvicorn
+python-multipart

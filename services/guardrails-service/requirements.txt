@@ -1,1 +1,2 @@
-# Guardrails service dependencies — populate during implementation.
+fastapi
+uvicorn
