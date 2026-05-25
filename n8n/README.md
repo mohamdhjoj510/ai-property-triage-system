@@ -15,7 +15,7 @@ Before importing or running the workflow, make sure the following are up:
 | LangGraph Agent | `http://127.0.0.1:8004` | Required — n8n calls `POST /agent/run`. |
 | RAG service | `http://127.0.0.1:8001` | Called internally by the agent. |
 | Image Analyzer | `http://127.0.0.1:8003` | Not used by this first flow (text-only). |
-| Guardrails service | `http://127.0.0.1:8002` | Not used by this first flow (skipped at the webhook layer). |
+| Guardrails service | `http://127.0.0.1:8002` | Used by Flow 03 to prefilter input before the agent runs. |
 | Ollama (llama3) | `http://127.0.0.1:11434` | Used by the agent for synthesis. |
 
 > The first webhook intentionally **bypasses the input Guardrails service**
@@ -285,6 +285,275 @@ Invoke-RestMethod `
 2. **Body** → *raw* → *JSON*, paste the sample body above.
 3. Send. The agent's JSON response is the body of the reply.
 
+## Flow 03 — `guardrails-prefilter`
+
+> **Status: Implemented, published, and tested in n8n.**
+
+```
+[ Webhook ]
+   └→ [ HTTP Request → Guardrails ]
+         └→ [ IF: approved? ]
+               ├── true  → [ HTTP Request → Agent ] → [ Respond to Webhook ]
+               └── false → [ Respond to Webhook (rejected) ]
+```
+
+Wraps the agent in a cheap, rule-based safety check. The Guardrails
+service is a few milliseconds of regex/keyword matching; the Agent is
+RAG retrieval, CLIP inference (if images), and an Ollama LLM call. Running
+guardrails *before* the agent means obviously off-topic, spammy, or
+malformed input never burns the expensive path.
+
+### Why prefilter before the agent?
+
+- **Cost / latency.** A single agent run can take 30–180 s on CPU
+  (model load + LLM generation). Guardrails returns in tens of
+  milliseconds. Rejecting `"buy crypto now"` should not require waking
+  llama3.
+- **Abuse surface.** A public webhook is a free LLM endpoint to anyone
+  who finds the URL. Guardrails caps that exposure with a clear pre-LLM
+  gate that's easy to audit and extend.
+- **Quality signal in the output.** Output validation (`validation`
+  block) catches risky/unsupported claims the LLM might emit; **input**
+  guardrails stop bad input from reaching the LLM in the first place.
+  The two layers are independent and complement each other.
+- **Clear blame in logs.** Failures are tagged at the boundary: a
+  rejected payload never appears in the agent service logs at all,
+  making post-incident triage simpler.
+
+### 1. Webhook Trigger
+
+| Setting | Value |
+|---------|-------|
+| Node type | **Webhook** |
+| HTTP Method | `POST` |
+| Path | `guardrails-prefilter` |
+| Authentication | `None` (add Basic / Header auth before exposing publicly) |
+| Response Mode | `Using 'Respond to Webhook' Node` |
+
+**Expected request body:**
+
+```json
+{
+  "description": "Renovated 3-room apartment near the beach in Bat Yam, balcony, parking.",
+  "agent_name": "Dana Levi"
+}
+```
+
+### 2. HTTP Request → Guardrails
+
+| Setting | Value |
+|---------|-------|
+| Node type | **HTTP Request** |
+| Method | `POST` |
+| URL | `http://127.0.0.1:8002/check/input` |
+| Authentication | `None` |
+| Send Body | `On` |
+| Body Content Type | `JSON` |
+| Specify Body | `Using JSON` |
+| JSON Body | see below |
+| Response → Response Format | `JSON` |
+| Options → Timeout | `5000` (ms) — guardrails is local + rule-based |
+
+**JSON Body:**
+
+```json
+{
+  "text": "{{ $json.description }}"
+}
+```
+
+> The guardrails service field is `text` (not `description`). Make sure
+> the JSON body uses that key, otherwise the request will fail validation.
+
+**Service response shape:**
+
+```json
+{ "pass": true,  "reason": null }
+```
+
+or
+
+```json
+{ "pass": false, "reason": "Text contains spam-like phrase: 'buy crypto'." }
+```
+
+> The boolean field is named **`pass`** (a Python-reserved-word
+> workaround in the service). Use `{{$json.pass}}` in the IF node
+> below — not `approved`.
+
+### 3. IF — approval gate
+
+| Setting | Value |
+|---------|-------|
+| Node type | **IF** |
+| Conditions | one boolean condition |
+| Condition value 1 | `{{ $json.pass }}` |
+| Operator | `Equal` |
+| Condition value 2 | `true` (Boolean) |
+
+The IF node exposes two output branches: **true** (approved) and **false**
+(rejected).
+
+### 4a. Approved branch — HTTP Request → Agent
+
+Connect the IF node's **true** output to a new HTTP Request node
+identical to Flow 01's agent call:
+
+| Setting | Value |
+|---------|-------|
+| Node type | **HTTP Request** |
+| Method | `POST` |
+| URL | `http://127.0.0.1:8004/agent/run` |
+| Body Content Type | `JSON` |
+| JSON Body | see below |
+| Options → Timeout | `180000` (ms) |
+
+**JSON Body:**
+
+```json
+{
+  "description": "{{ $('Webhook').item.json.description }}",
+  "rag_result": {},
+  "image_analysis": {}
+}
+```
+
+The `$('Webhook')` expression pulls `description` from the *original*
+webhook payload rather than from the Guardrails response (which only
+contains `pass` / `reason`).
+
+### 4b. Approved branch — Respond to Webhook
+
+| Setting | Value |
+|---------|-------|
+| Node type | **Respond to Webhook** |
+| Respond With | `JSON` |
+| Response Body | `{{ $json }}` |
+| Response Code | `200` |
+
+Returns the full agent response (`property_summary`, `recommendations`,
+`tools_used`, `validation`, etc.) — the same shape Flow 01 returns.
+
+### 5. Rejected branch — Respond to Webhook
+
+Connect the IF node's **false** output to a second Respond to Webhook node:
+
+| Setting | Value |
+|---------|-------|
+| Node type | **Respond to Webhook** |
+| Respond With | `JSON` |
+| Response Body | see below |
+| Response Code | `400` |
+
+**Response Body:**
+
+```json
+{
+  "status": "rejected",
+  "reason": "{{ $json.reason }}"
+}
+```
+
+`$json.reason` here is the human-readable string the guardrails service
+returns (e.g. `"Text is too short (minimum 15 characters)."`,
+`"Text contains spam-like phrase: 'buy crypto'."`,
+`"Text appears off-topic — no real-estate-related keywords detected."`).
+
+## Testing Flow 03
+
+The webhook URL is `http://127.0.0.1:5678/webhook/guardrails-prefilter`.
+
+### Approved input (passes guardrails)
+
+```bash
+curl -X POST http://127.0.0.1:5678/webhook/guardrails-prefilter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Renovated 3-room apartment near the beach in Bat Yam, balcony, parking.",
+    "agent_name": "Dana Levi"
+  }'
+```
+
+Expected response — the full agent payload, same shape as Flow 01:
+
+```json
+{
+  "property_summary": "...",
+  "recommendations": ["..."],
+  "renovation_insights": ["..."],
+  "suggested_route": "residential",
+  "tools_used": ["rag_service"],
+  "rag_result": { "similar_listings": [...], "insight": "..." },
+  "validation": {
+    "unsupported_claims": [],
+    "risky_claims_detected": false,
+    "confidence_level": "medium",
+    "validation_passed": true
+  }
+}
+```
+
+### Rejected input — spam phrase
+
+```bash
+curl -X POST http://127.0.0.1:5678/webhook/guardrails-prefilter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Buy crypto now and get a free apartment in Tel Aviv!",
+    "agent_name": "Spammer Inc."
+  }'
+```
+
+Expected response (HTTP 400):
+
+```json
+{
+  "status": "rejected",
+  "reason": "Text contains spam-like phrase: 'buy crypto'."
+}
+```
+
+### Rejected input — too short
+
+```bash
+curl -X POST http://127.0.0.1:5678/webhook/guardrails-prefilter \
+  -H "Content-Type: application/json" \
+  -d '{ "description": "nice flat", "agent_name": "X" }'
+```
+
+Expected response (HTTP 400):
+
+```json
+{
+  "status": "rejected",
+  "reason": "Text is too short (minimum 15 characters)."
+}
+```
+
+### Rejected input — off-topic
+
+```bash
+curl -X POST http://127.0.0.1:5678/webhook/guardrails-prefilter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "I really enjoyed the latest Marvel movie, the visual effects were stunning.",
+    "agent_name": "Cinephile"
+  }'
+```
+
+Expected response (HTTP 400):
+
+```json
+{
+  "status": "rejected",
+  "reason": "Text appears off-topic — no real-estate-related keywords detected."
+}
+```
+
+The key observation: in all three rejection cases, the agent service is
+**never called** — n8n short-circuits at the IF node and the expensive
+LLM path is never woken up.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -296,12 +565,12 @@ Invoke-RestMethod `
 
 ## Next iterations
 
-Flows 01 and 02 cover the text-only and image-aware paths. Planned
+Flows 01–03 are all built, published, and tested in n8n today. Planned
 follow-ups (separate workflows; do not modify the existing ones):
 
-1. **`guardrails-prefilter`** — call `POST http://127.0.0.1:8002/check/input`
-   before the Agent node, short-circuit with `Respond to Webhook` if the
-   guardrails reject the listing.
+1. **`guardrails-prefilter-with-images`** — same gate as Flow 03 but in
+   front of `/agent/run-with-images` so image submissions also get a
+   cheap text pre-check before CLIP and Ollama run.
 2. **`triage-notify`** — fan-out node that posts the agent response to
    Slack / email / a CRM webhook based on `suggested_route`.
 
