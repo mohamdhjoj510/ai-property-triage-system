@@ -1,0 +1,111 @@
+{
+  "name": "flow-02-agent-webhook-with-images",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent-webhook-with-images",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        16
+      ],
+      "id": "507d9d3f-7adc-4a1c-8676-63f3fe1c3e95",
+      "name": "Webhook",
+      "webhookId": "5b40df58-b9b5-4e2d-b223-2d42df6c285f"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8004/agent/run-with-images",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "description",
+              "value": "={{ $json.body.description }}"
+            },
+            {
+              "name": "agent_name",
+              "value": "={{ $json.body.agent_name }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -112,
+        16
+      ],
+      "id": "a0c474af-0b63-4715-9d15-6efe21d930ec",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        96,
+        16
+      ],
+      "id": "18fe6611-7c1f-422a-9c27-0d094cd9e241",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8ca24a31-c6cc-4389-aef2-21ee5ce476c4",
+  "meta": {
+    "instanceId": "7af5021f6ae2aa8c124227c342dd333c19a467316d215c2cf84cd5c31b436bad"
+  },
+  "id": "I9SWR7kES4hAaTcf",
+  "tags": []
+}
