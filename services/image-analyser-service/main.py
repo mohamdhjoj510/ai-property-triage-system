@@ -70,6 +70,14 @@ MAX_CONDITION_SCORE = 5
 CLASSIFIER_TRAINED = "trained_resnet18"
 CLASSIFIER_FALLBACK = "clip_fallback"
 
+# --- Image-content guardrail ---
+# When the trained classifier emits the `not_real_estate` raw label with high
+# confidence, the analyser flags the upload as suspicious. Threshold tuned for
+# precision over recall: false positives here block submissions, so we'd
+# rather miss a few than block legitimate property photos.
+SUSPICIOUS_IMAGE_THRESHOLD = 0.75
+NOT_REAL_ESTATE_RAW_LABEL = "not_real_estate"
+
 
 # --- Trained classifier loading ---
 
@@ -151,8 +159,13 @@ _trained_classifier = load_trained_classifier()
 # --- Classifiers ---
 
 
-def classify_with_trained_model(image: Image.Image) -> tuple[str, float]:
-    """Run the trained ResNet18 head. Returns (api_label, confidence)."""
+def classify_with_trained_model(image: Image.Image) -> tuple[str, str, float]:
+    """Run the trained ResNet18 head. Returns (api_label, raw_label, confidence).
+
+    `raw_label` is the unmapped trained-class name (e.g. `not_real_estate`,
+    `kitchen_dining`) so callers can apply content guardrails before the
+    label is normalised for the public API.
+    """
     assert _trained_classifier is not None  # caller checks before invoking
     bundle = _trained_classifier
     tensor = bundle["transform"](image).unsqueeze(0)
@@ -161,11 +174,16 @@ def classify_with_trained_model(image: Image.Image) -> tuple[str, float]:
     probs = torch.softmax(logits, dim=1).squeeze(0)
     best_idx = int(torch.argmax(probs).item())
     raw_label = bundle["idx_to_class"].get(best_idx, "other")
-    return normalize_class_label(raw_label), float(probs[best_idx].item())
+    return normalize_class_label(raw_label), raw_label, float(probs[best_idx].item())
 
 
-def classify_with_clip_fallback(image: Image.Image) -> tuple[str, float]:
-    """Zero-shot CLIP classification — same behaviour as the previous version."""
+def classify_with_clip_fallback(image: Image.Image) -> tuple[str, str, float]:
+    """Zero-shot CLIP classification. Returns (api_label, raw_label, confidence).
+
+    CLIP labels are already in the API's namespace, so `raw_label == api_label`.
+    CLIP cannot emit `not_real_estate`, so its results never trigger the
+    image guardrail.
+    """
     inputs = _clip_processor(
         text=CLIP_ROOM_PROMPTS,
         images=image,
@@ -176,7 +194,24 @@ def classify_with_clip_fallback(image: Image.Image) -> tuple[str, float]:
         outputs = _clip_model(**inputs)
     probs = outputs.logits_per_image.softmax(dim=1).squeeze(0)
     best_idx = int(torch.argmax(probs).item())
-    return CLIP_ROOM_LABELS[best_idx], float(probs[best_idx].item())
+    label = CLIP_ROOM_LABELS[best_idx]
+    return label, label, float(probs[best_idx].item())
+
+
+def _evaluate_image_guardrail(raw_label: str, confidence: float) -> dict:
+    """Compute the image-content guardrail flags for a single classification."""
+    is_real_estate = raw_label != NOT_REAL_ESTATE_RAW_LABEL
+    warning_raised = not is_real_estate
+    status = (
+        "warning"
+        if warning_raised and confidence >= SUSPICIOUS_IMAGE_THRESHOLD
+        else "pass"
+    )
+    return {
+        "is_real_estate_image": is_real_estate,
+        "image_guardrail_warning": warning_raised,
+        "image_guardrail_status": status,
+    }
 
 
 # --- Condition heuristic (unchanged) ---
@@ -203,12 +238,17 @@ def estimate_condition_score(image: Image.Image) -> int:
 
 
 def _fallback_result(filename: str) -> dict:
+    """Returned when the file can't be decoded as an image. Never blocks submission."""
     return {
         "filename": filename,
         "detected_room_type": "other",
         "condition_score": MIN_CONDITION_SCORE,
         "confidence": 0.0,
         "classifier": CLASSIFIER_FALLBACK,
+        "raw_label": "other",
+        "is_real_estate_image": True,
+        "image_guardrail_warning": False,
+        "image_guardrail_status": "pass",
     }
 
 
@@ -224,13 +264,14 @@ async def analyse_upload(file: UploadFile) -> dict:
         return _fallback_result(filename)
 
     label: str | None = None
+    raw_label: str = "other"
     confidence: float = 0.0
     classifier_used = CLASSIFIER_FALLBACK
 
     # Primary path: trained model if available.
     if _trained_classifier is not None:
         try:
-            label, confidence = classify_with_trained_model(image)
+            label, raw_label, confidence = classify_with_trained_model(image)
             classifier_used = CLASSIFIER_TRAINED
         except Exception:
             # Swallow and fall through to CLIP — no traceback to client.
@@ -239,7 +280,7 @@ async def analyse_upload(file: UploadFile) -> dict:
     # Fallback path: CLIP zero-shot.
     if label is None:
         try:
-            label, confidence = classify_with_clip_fallback(image)
+            label, raw_label, confidence = classify_with_clip_fallback(image)
             classifier_used = CLASSIFIER_FALLBACK
         except Exception:
             return _fallback_result(filename)
@@ -249,12 +290,16 @@ async def analyse_upload(file: UploadFile) -> dict:
     except Exception:
         condition_score = MIN_CONDITION_SCORE
 
+    guardrail = _evaluate_image_guardrail(raw_label, confidence)
+
     return {
         "filename": filename,
         "detected_room_type": label,
         "condition_score": condition_score,
         "confidence": round(confidence, 4),
         "classifier": classifier_used,
+        "raw_label": raw_label,
+        **guardrail,
     }
 
 

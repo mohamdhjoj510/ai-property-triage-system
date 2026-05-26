@@ -578,6 +578,20 @@ def sanitize_recommendations(
     return cleaned
 
 
+SUSPICIOUS_IMAGE_REASON = (
+    "One or more uploaded images may not be related to real estate."
+)
+
+
+def _detect_image_warnings(image_analysis: dict) -> list[str]:
+    """Return the filenames of images the analyser flagged with status=='warning'."""
+    flagged: list[str] = []
+    for item in image_analysis.get("results", []) or []:
+        if item.get("image_guardrail_status") == "warning":
+            flagged.append(item.get("filename", "unknown"))
+    return flagged
+
+
 def validation_node(state: AgentState) -> dict:
     """Run output guardrails over the synthesizer's output."""
     description = state.get("description", "")
@@ -593,17 +607,32 @@ def validation_node(state: AgentState) -> dict:
     known_features = extract_known_features(description, rag_result, image_analysis)
     unsupported = find_unsupported_claims(llm_texts, known_features)
     risky_detected = contains_risky_claims(llm_texts)
-    confidence = compute_confidence_level(
+    base_confidence = compute_confidence_level(
         rag_result, image_analysis, unsupported, risky_detected
     )
     sanitized_recs = sanitize_recommendations(recommendations, risky_detected)
 
-    validation = {
+    # Image-content guardrail: an upstream warning forces a hard block.
+    flagged_images = _detect_image_warnings(image_analysis)
+    image_warning = bool(flagged_images)
+
+    validation: dict = {
         "unsupported_claims": unsupported,
         "risky_claims_detected": risky_detected,
-        "confidence_level": confidence,
-        "validation_passed": not (unsupported or risky_detected),
+        "confidence_level": "low" if image_warning else base_confidence,
+        "validation_passed": (not (unsupported or risky_detected)) and not image_warning,
     }
+    if image_warning:
+        validation["image_guardrails"] = {
+            "warning_detected": True,
+            "reasons": [SUSPICIOUS_IMAGE_REASON],
+        }
+    else:
+        validation["image_guardrails"] = {
+            "warning_detected": False,
+            "reasons": [],
+        }
+
     return {
         "recommendations": sanitized_recs,
         "validation": validation,
@@ -635,17 +664,30 @@ def _build_response(final_state: AgentState) -> dict:
 
     The five original fields are always present, plus the `validation`
     block produced by `validation_node`. `rag_result` and `image_analysis`
-    are added only when those tools contributed — the WebUI can use them
-    to render the same RAG / image sections it used to render itself
-    before this service took over orchestration.
+    are added only when those tools contributed.
+
+    Two top-level fields are added by this stage:
+      * `submission_blocked` — true if the image-content guardrail tripped.
+      * `submission_block_reason` — human-readable reason, or null when not blocked.
     """
+    validation = final_state.get("validation") or {}
+    image_warning = bool(
+        (validation.get("image_guardrails") or {}).get("warning_detected")
+    )
+
     response: dict = {
         "property_summary": final_state["property_summary"],
         "recommendations": final_state["recommendations"],
         "renovation_insights": final_state["renovation_insights"],
         "suggested_route": final_state["suggested_route"],
         "tools_used": final_state["tools_used"],
-        "validation": final_state.get("validation") or {},
+        "validation": validation,
+        "submission_blocked": image_warning,
+        "submission_block_reason": (
+            "Remove suspicious images before publishing this listing."
+            if image_warning
+            else None
+        ),
     }
     rag_result = final_state.get("rag_result") or {}
     image_analysis = final_state.get("image_analysis") or {}

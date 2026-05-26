@@ -578,6 +578,227 @@ def apply_custom_theme() -> None:
         .apt-listing-doc { color: #B8BCC4; font-size: 12px; line-height: 1.5; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
         .apt-listing-features { color: var(--text-dim); font-size: 11px; margin-top: 8px; font-style: italic; }
 
+        /* ---------- Submission block card (image guardrail) ---------- */
+        .apt-block-card {
+            background:
+                radial-gradient(circle at 0% 0%, rgba(255, 82, 82, 0.15) 0%, transparent 55%),
+                linear-gradient(135deg, rgba(255, 82, 82, 0.08) 0%, transparent 100%);
+            border: 1px solid rgba(255, 82, 82, 0.45);
+            border-left: 4px solid var(--danger);
+            border-radius: 14px;
+            padding: 22px 26px;
+            margin: 14px 0 20px 0;
+            box-shadow: 0 0 28px -6px rgba(255, 82, 82, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+        .apt-block-card::before {
+            content: "";
+            position: absolute;
+            top: -30%;
+            right: -10%;
+            width: 40%;
+            height: 200%;
+            background: radial-gradient(ellipse, rgba(255, 82, 82, 0.12) 0%, transparent 60%);
+            filter: blur(50px);
+            pointer-events: none;
+        }
+        .apt-block-title {
+            color: #FF8888;
+            font-size: 19px;
+            font-weight: 700;
+            margin: 0 0 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-shadow: 0 0 18px rgba(255, 82, 82, 0.3);
+            position: relative;
+        }
+        .apt-block-title .icon {
+            display: inline-flex;
+            width: 28px;
+            height: 28px;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 82, 82, 0.18);
+            color: #FF8888;
+            border: 1px solid rgba(255, 82, 82, 0.5);
+            border-radius: 50%;
+            font-size: 14px;
+            font-weight: 800;
+        }
+        .apt-block-body { color: var(--text); font-size: 14px; line-height: 1.55; margin: 6px 0 12px 0; position: relative; }
+        .apt-block-cta {
+            background: rgba(255, 82, 82, 0.07);
+            border: 1px solid rgba(255, 82, 82, 0.30);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #FFD0D0;
+            font-size: 13px;
+            font-weight: 600;
+            position: relative;
+        }
+        .apt-manual-correction {
+            background: rgba(255, 82, 82, 0.06);
+            border: 1px solid rgba(255, 82, 82, 0.30);
+            border-left: 3px solid var(--danger);
+            border-radius: 12px;
+            padding: 14px 18px;
+            margin: 14px 0 20px 0;
+            color: #FFD0D0;
+            font-weight: 600;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Suspicious image card styling */
+        .apt-image-card.suspicious {
+            border: 1px solid rgba(255, 82, 82, 0.55) !important;
+            border-left: 3px solid var(--danger) !important;
+            box-shadow: 0 0 24px -6px rgba(255, 82, 82, 0.30);
+        }
+        .apt-image-card.suspicious:hover {
+            border-color: rgba(255, 82, 82, 0.7) !important;
+            box-shadow: 0 6px 28px -6px rgba(255, 82, 82, 0.40);
+        }
+        .apt-suspicious-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 82, 82, 0.14);
+            color: #FF8888;
+            border: 1px solid rgba(255, 82, 82, 0.45);
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+        }
+
+        /* ---------- Vision summary panel ---------- */
+        .apt-vision-summary {
+            background:
+                radial-gradient(circle at 0% 0%, rgba(134, 188, 37, 0.10) 0%, transparent 55%),
+                linear-gradient(135deg, rgba(134, 188, 37, 0.05) 0%, transparent 100%);
+            border: 1px solid rgba(134, 188, 37, 0.28);
+            border-left: 3px solid var(--accent);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 12px 0 12px 0;
+            position: relative;
+            overflow: hidden;
+        }
+        .apt-vision-status {
+            color: var(--accent-bright);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.8px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .apt-vision-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-bright);
+            box-shadow: 0 0 10px rgba(166, 226, 46, 0.7);
+            animation: apt-pulse 2.5s infinite ease-in-out;
+        }
+        @keyframes apt-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.45; }
+        }
+        .apt-vision-metrics { display: flex; flex-wrap: wrap; gap: 30px; }
+        .apt-vision-metrics > div { display: flex; flex-direction: column; min-width: 110px; }
+        .apt-vision-metrics .k { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+        .apt-vision-metrics .v { color: var(--text); font-size: 17px; font-weight: 700; }
+
+        /* Callout when trained model contributed */
+        .apt-vision-callout {
+            background: rgba(134, 188, 37, 0.10);
+            border: 1px solid rgba(134, 188, 37, 0.38);
+            border-radius: 8px;
+            padding: 10px 14px;
+            margin: 10px 0 14px 0;
+            color: var(--accent-bright);
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .apt-vision-callout .check {
+            display: inline-flex;
+            width: 18px;
+            height: 18px;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent-bright);
+            color: #0A0E0C;
+            border-radius: 50%;
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        /* Classifier badge */
+        .apt-classifier-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+        }
+        .apt-classifier-badge.trained {
+            background: rgba(134, 188, 37, 0.12);
+            color: var(--accent-bright);
+            border: 1px solid rgba(134, 188, 37, 0.45);
+            box-shadow: 0 0 10px -2px rgba(134, 188, 37, 0.25);
+        }
+        .apt-classifier-badge.fallback {
+            background: rgba(255, 193, 7, 0.10);
+            color: #FFD93D;
+            border: 1px solid rgba(255, 193, 7, 0.40);
+        }
+
+        /* Confidence meter */
+        .apt-confidence-meter { margin-top: 10px; }
+        .apt-confidence-bar {
+            height: 6px;
+            background: #0A0E0C;
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .apt-confidence-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s ease;
+        }
+        .apt-confidence-fill.high { background: linear-gradient(90deg, var(--accent), var(--accent-bright)); box-shadow: 0 0 8px rgba(166, 226, 46, 0.35); }
+        .apt-confidence-fill.medium { background: linear-gradient(90deg, var(--info), #A0BFFF); }
+        .apt-confidence-fill.low { background: linear-gradient(90deg, var(--warning), #FFD93D); }
+        .apt-confidence-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 700;
+            margin-top: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .apt-confidence-label.high { color: var(--accent-bright); }
+        .apt-confidence-label.medium { color: var(--info); }
+        .apt-confidence-label.low { color: #FFD93D; }
+
         /* ---------- Image card ---------- */
         .apt-image-card {
             background: var(--bg-elev);
@@ -1084,6 +1305,10 @@ def render_executive_summary(triage: dict[str, Any]) -> None:
     primary_concern = _compute_primary_concern(triage)
     concern_class = "clean" if primary_concern == "None flagged" else "concern"
 
+    submission_blocked = bool(agent.get("submission_blocked"))
+    pub_status = "BLOCKED" if submission_blocked else "Ready"
+    pub_class = "concern" if submission_blocked else "clean"
+
     st.markdown(
         f"""
         <div class="apt-exec">
@@ -1093,6 +1318,7 @@ def render_executive_summary(triage: dict[str, Any]) -> None:
           <div class="apt-exec-row"><span class="k">Primary concern</span><span class="v {concern_class}">{_esc(primary_concern)}</span></div>
           <div class="apt-exec-row"><span class="k">Comparable listings</span><span class="v">{len(rag.get("similar_listings") or [])}</span></div>
           <div class="apt-exec-row"><span class="k">Images analysed</span><span class="v">{len(image.get("results") or [])}</span></div>
+          <div class="apt-exec-row"><span class="k">Publication status</span><span class="v {pub_class}">{pub_status}</span></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1190,6 +1416,40 @@ def render_next_actions() -> None:
     )
 
 
+def render_submission_block_card(reason: str) -> None:
+    """Large red moderation card shown at the top of results when blocked."""
+    body = (
+        _esc(reason)
+        or "This listing cannot be published until the suspicious image is removed."
+    )
+    st.markdown(
+        f"""
+        <div class="apt-block-card">
+          <div class="apt-block-title"><span class="icon">!</span>Suspicious image detected</div>
+          <div class="apt-block-body">
+            This listing cannot be published until the suspicious image is removed.
+          </div>
+          <div class="apt-block-cta">
+            Remove the flagged image and upload a valid property photo to continue.
+            <br/><span style="color: var(--text-muted); font-weight: 500; font-size: 12px;">{body}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_manual_correction_message() -> None:
+    """Shown in place of 'Next recommended actions' when submission is blocked."""
+    st.markdown(
+        '<div class="apt-manual-correction">'
+        '<span>⚠</span>'
+        'Manual correction required before submission.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 # --- Existing result renderers ---
 
 
@@ -1253,6 +1513,145 @@ def render_rag_cards(rag_response: dict[str, Any] | None) -> None:
                 )
 
 
+CLASSIFIER_LABEL = {
+    "trained_resnet18": "Custom Trained Vision Model",
+    "clip_fallback": "CLIP Zero-Shot Fallback",
+}
+
+
+def _classifier_display_name(classifier: str | None) -> str:
+    """Short human-friendly label for the summary panel."""
+    if classifier == "trained_resnet18":
+        return "Trained ResNet18"
+    if classifier == "clip_fallback":
+        return "CLIP Fallback"
+    return "Unknown"
+
+
+def _confidence_band(value: float) -> tuple[str, str]:
+    """Map a confidence in [0,1] to (css_class, human_label)."""
+    if value >= 0.85:
+        return "high", "High confidence"
+    if value >= 0.60:
+        return "medium", "Medium confidence"
+    return "low", "Low confidence"
+
+
+def render_classifier_badge(classifier: str | None) -> str:
+    """Return HTML for a per-image classifier badge (green / amber)."""
+    if classifier == "trained_resnet18":
+        return (
+            f'<span class="apt-classifier-badge trained">'
+            f'{CLASSIFIER_LABEL["trained_resnet18"]}</span>'
+        )
+    if classifier == "clip_fallback":
+        return (
+            f'<span class="apt-classifier-badge fallback">'
+            f'{CLASSIFIER_LABEL["clip_fallback"]}</span>'
+        )
+    return ""
+
+
+def render_confidence_meter(confidence: float) -> str:
+    """Return HTML for a progress bar + band label scaled to [0, 1]."""
+    safe_value = max(0.0, min(1.0, float(confidence)))
+    cls, label = _confidence_band(safe_value)
+    pct = safe_value * 100
+    return (
+        f'<div class="apt-confidence-meter">'
+        f'<div class="apt-confidence-bar">'
+        f'<div class="apt-confidence-fill {cls}" style="width: {pct:.0f}%;"></div>'
+        f'</div>'
+        f'<div class="apt-confidence-label {cls}">'
+        f'<span>{label}</span><span>{pct:.0f}%</span>'
+        f'</div>'
+        f'</div>'
+    )
+
+
+def _compute_image_analysis_summary(image_response: dict[str, Any]) -> dict[str, Any] | None:
+    """Aggregate per-image results into the values shown in the top summary panel."""
+    results = image_response.get("results") or []
+    if not results:
+        return None
+
+    trained_count = sum(
+        1 for r in results if r.get("classifier") == "trained_resnet18"
+    )
+    fallback_count = sum(
+        1 for r in results if r.get("classifier") == "clip_fallback"
+    )
+    # Primary = whichever classifier handled the most images, tie goes to trained.
+    primary = (
+        "Trained ResNet18"
+        if trained_count >= fallback_count and trained_count > 0
+        else ("CLIP Fallback" if fallback_count > 0 else "Unknown")
+    )
+
+    confidences = [
+        float(r.get("confidence"))
+        for r in results
+        if isinstance(r.get("confidence"), (int, float))
+    ]
+    avg_confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
+
+    return {
+        "count": len(results),
+        "trained_count": trained_count,
+        "fallback_count": fallback_count,
+        "primary": primary,
+        "avg_confidence": avg_confidence,
+    }
+
+
+def render_image_analysis_summary(image_response: dict[str, Any]) -> None:
+    """Top summary panel + 'trained model active' callout + Vision AI Stack info."""
+    summary = _compute_image_analysis_summary(image_response)
+    if summary is None:
+        return
+
+    avg_pct = f"{summary['avg_confidence'] * 100:.0f}%"
+    st.markdown(
+        f"""
+        <div class="apt-vision-summary">
+          <div class="apt-vision-status">
+            <span class="apt-vision-dot"></span>
+            Vision pipeline status · Operational
+          </div>
+          <div class="apt-vision-metrics">
+            <div><span class="k">Images analysed</span><span class="v">{summary['count']}</span></div>
+            <div><span class="k">Primary classifier</span><span class="v">{_esc(summary['primary'])}</span></div>
+            <div><span class="k">Average confidence</span><span class="v">{avg_pct}</span></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if summary["trained_count"] > 0:
+        st.markdown(
+            '<div class="apt-vision-callout">'
+            '<span class="check">✓</span>'
+            'Custom trained real-estate vision model active.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("Vision AI Stack"):
+        st.markdown(
+            "- **ResNet18 transfer learning** — frozen ImageNet backbone with a "
+            "custom classifier head trained on the project's real-estate room dataset.\n"
+            "- **PyTorch inference** — torchvision ResNet18 executed locally on CPU; "
+            "CUDA used automatically when available.\n"
+            "- **Real-estate dataset fine-tuning** — domain-specific labels "
+            "(bathroom, bedroom, balcony, building_exterior, kitchen_dining, living_room, "
+            "garden, not_real_estate) mapped to the API's stable label set.\n"
+            "- **CLIP fallback safety layer** — `openai/clip-vit-base-patch32` zero-shot "
+            "classifier engaged whenever the trained checkpoint is missing or inference "
+            "fails, so the API contract never breaks."
+        )
+
+
 def render_image_analysis_cards(
     image_response: dict[str, Any] | None, image_count: int
 ) -> None:
@@ -1269,6 +1668,8 @@ def render_image_analysis_cards(
         st.caption("Image analyser returned no results.")
         return
 
+    render_image_analysis_summary(image_response)
+
     for row_start in range(0, len(results), RESULT_CARD_COLUMNS):
         row = results[row_start : row_start + RESULT_CARD_COLUMNS]
         cols = st.columns(RESULT_CARD_COLUMNS)
@@ -1277,6 +1678,10 @@ def render_image_analysis_cards(
             room_type = _esc(item.get("detected_room_type", "unknown"))
             condition_score = item.get("condition_score")
             confidence = item.get("confidence")
+            classifier = item.get("classifier")
+            confidence_val = (
+                float(confidence) if isinstance(confidence, (int, float)) else 0.0
+            )
             confidence_str = (
                 f"{float(confidence) * 100:.1f}%"
                 if isinstance(confidence, (int, float))
@@ -1287,14 +1692,33 @@ def render_image_analysis_cards(
                 if isinstance(condition_score, (int, float))
                 else _esc(condition_score)
             )
+            badge_html = render_classifier_badge(classifier)
+            meter_html = render_confidence_meter(confidence_val)
+
+            is_suspicious = item.get("image_guardrail_status") == "warning"
+            card_class = "apt-image-card suspicious" if is_suspicious else "apt-image-card"
+            suspicious_badge = (
+                '<span class="apt-suspicious-badge">⚠ Suspicious image</span>'
+                if is_suspicious else ""
+            )
+            badges = [b for b in (suspicious_badge, badge_html) if b]
+            badge_block = (
+                f'<div style="margin-bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px;">'
+                f'{"".join(badges)}</div>'
+                if badges
+                else ""
+            )
+
             with col:
                 st.markdown(
                     f"""
-                    <div class="apt-image-card">
+                    <div class="{card_class}">
                       <div class="apt-image-filename">{filename}</div>
+                      {badge_block}
                       <div class="apt-image-row"><span class="k">Room</span><span class="v">{room_type}</span></div>
                       <div class="apt-image-row"><span class="k">Condition</span><span class="v">{score_str}</span></div>
                       <div class="apt-image-row"><span class="k">Confidence</span><span class="v">{confidence_str}</span></div>
+                      {meter_html}
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1375,6 +1799,17 @@ def render_output_validation(validation: dict[str, Any]) -> None:
     risky_class = "risk-detected" if risky else "risk-clean"
     risky_value = "Risky claims detected" if risky else "No risky claims detected"
 
+    image_guardrails = validation.get("image_guardrails") or {}
+    image_warning = bool(image_guardrails.get("warning_detected"))
+    image_guardrail_tile = ""
+    if image_warning:
+        image_guardrail_tile = (
+            '<div class="apt-val-tile risk-detected">'
+            '<div class="label">Image guardrails</div>'
+            '<div class="value">Warning detected</div>'
+            '</div>'
+        )
+
     st.markdown(
         f"""
         <div class="apt-val-row">
@@ -1390,10 +1825,20 @@ def render_output_validation(validation: dict[str, Any]) -> None:
             <div class="label">Risky claims</div>
             <div class="value">{risky_value}</div>
           </div>
+          {image_guardrail_tile}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    if image_warning:
+        reasons = image_guardrails.get("reasons") or []
+        for reason in reasons:
+            st.markdown(
+                f'<div class="apt-insight" style="border-left-color: var(--danger);">'
+                f'{_esc(reason)}</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown("**Unsupported claims**")
     if unsupported:
@@ -1475,7 +1920,14 @@ def render_full_results_from_state() -> None:
     image_count = triage["image_count"]
 
     _section("Triage Result")
-    render_success_summary_card(triage)
+
+    submission_blocked = bool(agent_response.get("submission_blocked"))
+    block_reason = agent_response.get("submission_block_reason") or ""
+
+    if submission_blocked:
+        render_submission_block_card(block_reason)
+    else:
+        render_success_summary_card(triage)
 
     exec_col, timeline_col = st.columns(2)
     with exec_col:
@@ -1484,7 +1936,11 @@ def render_full_results_from_state() -> None:
         render_reasoning_timeline(triage)
 
     render_risk_indicators(triage)
-    render_next_actions()
+
+    if submission_blocked:
+        render_manual_correction_message()
+    else:
+        render_next_actions()
 
     submitted_payload = {
         "description": description,
