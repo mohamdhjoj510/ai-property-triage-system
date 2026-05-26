@@ -2220,30 +2220,8 @@ def _render_dataset_filters(listings: list[dict]) -> tuple[list[str], list[str],
     return type_filter, condition_filter, location_filter
 
 
-def build_dataset_listing_description(listing: dict) -> str:
-    """Compose a single readable description string from a dataset listing."""
-    title = listing.get("title", "Untitled listing")
-    ptype = listing.get("property_type", "unknown")
-    location = listing.get("location", "unknown")
-    price = listing.get("price")
-    price_str = (
-        f"{int(price):,} ILS" if isinstance(price, (int, float)) else str(price)
-    )
-    rooms = listing.get("rooms", "?")
-    features_list = listing.get("features") or []
-    features = ", ".join(features_list) if features_list else "none listed"
-    condition = listing.get("condition", "unknown")
-    description = (listing.get("description") or "").strip() or "no description provided"
-
-    return (
-        f"{title}. Type: {ptype}. Location: {location}. Price: {price_str}. "
-        f"Rooms: {rooms}. Features: {features}. Condition: {condition}. "
-        f"Description: {description}"
-    )
-
-
 def render_dataset_listing_card(listing: dict) -> None:
-    """Render one dataset listing card and its 'Analyse this listing' action."""
+    """Render one read-only listing card. No actions, no pipeline trigger."""
     ptype = _esc(listing.get("property_type", "?"))
     rooms = listing.get("rooms", "?")
     title = _esc(listing.get("title", ""))
@@ -2275,17 +2253,6 @@ def render_dataset_listing_card(listing: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    listing_id = listing.get("id", "unknown")
-    if st.button(
-        "Analyse this listing",
-        key=f"analyse_listing_{listing_id}",
-        use_container_width=True,
-    ):
-        st.session_state.pending_dataset_analysis = build_dataset_listing_description(
-            listing
-        )
-        st.rerun()
-
 
 def _render_dataset_grid(listings: list[dict]) -> None:
     if not listings:
@@ -2300,49 +2267,15 @@ def _render_dataset_grid(listings: list[dict]) -> None:
                 render_dataset_listing_card(listing)
 
 
-def _render_dataset_demo_intro() -> None:
-    st.markdown(
-        """
-        <div class="apt-next-panel" style="margin-bottom: 18px;">
-          <div class="apt-next-title">Dataset Demo Mode</div>
-          <p style="color: var(--text); font-size: 13px; margin: 0; line-height: 1.5;">
-            Select any synthetic listing and run the full autonomous triage pipeline
-            without manually typing a description. The selected listing's metadata
-            is composed into a description and sent through the same Guardrails →
-            Agent flow as a manual submission.
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def render_listings_dataset_tab() -> None:
     _section("Listings Dataset")
     st.markdown(
         '<p style="color:#9AA0A6;margin:-6px 0 14px 0;font-size:13px;">'
-        "Visual browser over the synthetic listings corpus that the RAG service "
-        "is grounded on. Not connected to ChromaDB — reads the JSON directly."
+        "Read-only browser over the synthetic listings corpus that the RAG service "
+        "is grounded on. Reads the JSON directly; no pipeline execution from this tab."
         "</p>",
         unsafe_allow_html=True,
     )
-
-    _render_dataset_demo_intro()
-
-    # Handle a pending dataset-triggered analysis. Runs the same pipeline the
-    # submission tab uses; persists results to session_state.last_triage.
-    pending_analysis = st.session_state.pop("pending_dataset_analysis", None)
-    if pending_analysis:
-        st.info("Running analysis for selected dataset listing...")
-        run_triage_pipeline(pending_analysis, DEFAULT_AGENT_NAME, [])
-        # Intentionally no st.rerun() here — let results render below in the
-        # same script run so the user sees them immediately.
-
-    # Render the latest triage at the top of the tab (whether it was just
-    # produced by a dataset click or came from a previous submission).
-    if st.session_state.get("last_triage"):
-        render_full_results_from_state()
-        st.divider()
 
     listings = load_synthetic_listings()
     if not listings:
